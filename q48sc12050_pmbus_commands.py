@@ -11,7 +11,7 @@ class Q48SC12050PmbusCommandTable:
 			input_file = open(file_name, 'r')
 		except:
 			print("Invalid file name to initialize pmbus dictionary")
-			return
+			raise
 
 		# Read Headers Line
 		read_line = input_file.readline()
@@ -19,10 +19,11 @@ class Q48SC12050PmbusCommandTable:
 		# Read Data Lines
 		read_line = input_file.readline()
 		while read_line != "":
-			read_line = read_line.removesuffix("\n")
+			if read_line[-1] == "\n":
+				read_line = read_line[:-1]
 			command_data = read_line.split(",")
 			new_command_entry = Q48SC12050PmbusCommandEntry(command_data)
-			pmbus_command_table.update({new_command_entry.get_command_name(), new_command_entry})
+			self.pmbus_command_table.update({new_command_entry.get_command_name() : new_command_entry})
 			read_line = input_file.readline()
 
 		# Close File
@@ -54,30 +55,41 @@ class Q48SC12050PmbusCommandEntry:
 
 	def get_command_address(self):
 		command_address_string = self.command_entry_data[Q48SC12050PmbusCommandEntry.COMMAND_ADDRESS_INDEX]
-		command_address_string = command_address_string.removeprefix("0x")
+		if command_address_string[0:2] == "0x":
+			command_address_string = command_address_string[2:]
+		else:
+			print("Command address not read as hex")
 		command_address_int = int(command_address_string, 16)
 		return command_address_int
 
-	def is_read_en(self):
-		return (self.command_entry_data[Q48SC12050PmbusCommandEntry.READ_EN_INDEX] == TRUE_STRING)
+	def is_read_enabled(self):
+		return (self.command_entry_data[Q48SC12050PmbusCommandEntry.READ_EN_INDEX] == Q48SC12050PmbusCommandEntry.TRUE_STRING)
 
-	def is_write_en(self):
-		return (self.command_entry_data[Q48SC12050PmbusCommandEntry.WRITE_EN_INDEX] == TRUE_STRING)
+	def is_write_enabled(self):
+		return (self.command_entry_data[Q48SC12050PmbusCommandEntry.WRITE_EN_INDEX] == Q48SC12050PmbusCommandEntry.TRUE_STRING)
 
 	def get_num_data_bytes(self):
 		return int(self.command_entry_data[Q48SC12050PmbusCommandEntry.NUM_DATA_BYTES_INDEX])
 
 	def is_linear_data_format(self):
-		return (self.command_entry_data[Q48SC12050PmbusCommandEntry.LINEAR_COMMAND_INDEX] == TRUE_STRING)
+		return (self.command_entry_data[Q48SC12050PmbusCommandEntry.LINEAR_COMMAND_INDEX] == Q48SC12050PmbusCommandEntry.TRUE_STRING)
 
 	def get_exponent(self):
+		if not self.is_linear_data_format():
+			return None
 		return int(self.command_entry_data[Q48SC12050PmbusCommandEntry.EXPONENT_INDEX])
 
 	def get_num_mantissa_bits(self):
+		if not self.is_linear_data_format():
+			return None
 		return int(self.command_entry_data[Q48SC12050PmbusCommandEntry.NUM_MANTISSA_BITS_INDEX])
 
-	def get_num_exponents_bits(self):
+	def get_num_exponent_bits(self):
+		if not self.is_linear_data_format():
+			return None
 		return int(self.command_entry_data[Q48SC12050PmbusCommandEntry.NUM_EXPONENT_BITS_INDEX])
 
 	def is_data_signed(self):
-		return (self.command_entry_data[Q48SC12050PmbusCommandEntry.DATA_SIGNED_INDEX] == TRUE_STRING)
+		if not self.is_linear_data_format():
+			return None
+		return (self.command_entry_data[Q48SC12050PmbusCommandEntry.DATA_SIGNED_INDEX] == Q48SC12050PmbusCommandEntry.TRUE_STRING)
