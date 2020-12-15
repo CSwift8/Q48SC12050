@@ -2,6 +2,7 @@ from smbus2 import SMBus
 from bitstring import BitArray, CreationError
 import copy
 from q48sc12050_pmbus_commands import *
+from argparse import ArgumentParser
 
 class Q48SC12050BaseError(Exception):
 	def __init__(self, error_message):
@@ -54,10 +55,10 @@ class Q48SC12050:
 		self.verify_correct_num_data_bytes(len(bytes_to_write), command_entry)
 		command_address = command_entry.get_command_address()
 
-		#if len(bytes_to_write) > 0:
-		#	self.smbus_instance.write_i2c_block_data(self.device_address, command_address, bytes_to_write)
-		#else:
-		#	self.smbus_instance.write_byte(self.device_address, command_address)
+		if len(bytes_to_write) > 0:
+			self.smbus_instance.write_i2c_block_data(self.device_address, command_address, bytes_to_write)
+		else:
+			self.smbus_instance.write_byte(self.device_address, command_address)
 
 	def read_command(self, command):
 		command_entry = self.get_command_table_entry(command)
@@ -74,32 +75,7 @@ class Q48SC12050:
 		command_address = command_entry.get_command_address()
 		command_num_data_bytes = command_entry.get_num_data_bytes()
 
-		#return self.smbus_instance.read_i2c_block_data(self.device_address, command_address, command_num_data_bytes)
-
-	def verify_correct_num_data_bytes(self, actual_num, command_entry):
-		expected_num  = command_entry.get_num_data_bytes()
-		if (actual_num != expected_num):
-			raise Q48SC12050InvalidNumberOfWriteBytesError(command_entry.get_command_name(), actual_num, expected_num)
-
-	def verify_correct_exponent(self, actual_exponent, command_entry):
-		expected_exponent = command_entry.get_exponent()
-		if (actual_exponent != expected_exponent):
-			raise Q48SC12050InvalidExponentFromReadCommand(command_entry.get_command_name(), actual_exponent, expected_exponent)
-
-	def verify_command_write_enabled(self, command_entry):
-		if not command_entry.is_write_enabled():
-			raise Q48SC12050WriteEnableError(command_entry.get_command_name())
-
-	def verify_command_read_enabled(self, command_entry):
-		if not command_entry.is_read_enabled():
-			raise Q48SC12050ReadEnableError(command_entry.get_command_name())
-
-	def get_command_table_entry(self, command):
-		try:
-			command_entry = self.command_table[command]
-		except:
-			raise Q48SC12050InvalidCommandError(command)
-		return command_entry
+		return self.smbus_instance.read_i2c_block_data(self.device_address, command_address, command_num_data_bytes)
 
 	def get_linear_write_bytes(self, command_entry, value):
 		exponent = command_entry.get_exponent()
@@ -207,6 +183,161 @@ class Q48SC12050:
 			binary_increment /= 2
 		return BitArray(bit_string)
 
+	def verify_correct_num_data_bytes(self, actual_num, command_entry):
+		expected_num  = command_entry.get_num_data_bytes()
+		if (actual_num != expected_num):
+			raise Q48SC12050InvalidNumberOfWriteBytesError(command_entry.get_command_name(), actual_num, expected_num)
+
+	def verify_correct_exponent(self, actual_exponent, command_entry):
+		expected_exponent = command_entry.get_exponent()
+		if (actual_exponent != expected_exponent):
+			raise Q48SC12050InvalidExponentFromReadCommand(command_entry.get_command_name(), actual_exponent, expected_exponent)
+
+	def verify_command_write_enabled(self, command_entry):
+		if not command_entry.is_write_enabled():
+			raise Q48SC12050WriteEnableError(command_entry.get_command_name())
+
+	def verify_command_read_enabled(self, command_entry):
+		if not command_entry.is_read_enabled():
+			raise Q48SC12050ReadEnableError(command_entry.get_command_name())
+
+	def get_command_table_entry(self, command):
+		try:
+			command_entry = self.command_table[command]
+		except:
+			raise Q48SC12050InvalidCommandError(command)
+		return command_entry
+
+	def get_device_address(self):
+		return self.device_address
+
+class Q48SC12050CLInstructionsBaseError(Exception):
+	def __init__(self, error_message):
+		super().__init__(error_message)
+		self.error_message = error_message
+
+class Q48SC12050CLInstructionsInvalidDeviceAddressInput(Q48SC12050CLInstructionsBaseError):
+	def __init__(self, device_address):
+		super().__init__(f"{device_address} is not a valid device address")
+
+class Q48SC12050CLInstructionsDeviceAddressAlreadyExists(Q48SC12050CLInstructionsBaseError):
+	def __init__(self, device_address):
+		super().__init__(f"Device with address {device_address} is already configured")
+
+class Q48SC12050CLInstructionsInvalidPowerBrickSelection(Q48SC12050CLInstructionsBaseError):
+	def __init__(self, argument):
+		super().__init__(f"Error selecting power brick with -i and -a command options")
+
+class Q48SC12050CLInstructions:
+
+	DEVICE_ADDRESS_INDEX = 0
+	POWER_BRICK_INSTANCE_INDEX = 1
+
+	def __init__(self, smbus_instance, command_table):
+		self.num_power_bricks_configured = 0
+		self.power_bricks_list = [[], []]
+		self.smbus_instance = smbus_instance
+		self.command_table = command_table
+
+	def evoke_device_configuration_prompt(self):
+		self.configure_initial_num_power_bricks()
+		self.configure_initial_power_bricks()
+
+	def configure_initial_num_power_bricks(self):
+		is_valid_input = False
+		while not is_valid_input:
+			print("Number of Q48SSC12050 Power Bricks:", end=" ")
+			try:
+				self.num_power_bricks_configured = int(input())
+			except:
+				print("Invalid input; try again")
+			else:
+				is_valid_input = True
+
+	def configure_initial_power_bricks(self):
+		for i in range(self.num_power_bricks_configured):
+			is_valid_input = False
+			while not is_valid_input:
+				print(f"Power Brick {i} PMBus Device Address:", end=" ");
+				device_address_string = str(input())
+				try:
+					device_address_int = self.convert_device_address_string_to_int(device_address_string)
+					self.check_unique_device_address(device_address_int)
+				except Q48SC12050CLInstructionsBaseError as err:
+					print(err.error_message)
+					is_valid_input = False
+				else:
+					self.add_power_brick(device_address_int)
+					is_valid_input = True
+
+	def add_power_brick(self, device_address):
+		power_brick = Q48SC12050(device_address, self.smbus_instance, self.command_table)
+		self.power_bricks_list[Q48SC12050CLInstructions.DEVICE_ADDRESS_INDEX].append(device_address)
+		self.power_bricks_list[Q48SC12050CLInstructions.POWER_BRICK_INSTANCE_INDEX].append(power_brick)
+
+	def delete_power_brick(self, device_address):
+		if device_address in self.power_bricks_list[Q48SC12050CLInstructions.DEVICE_ADDRESS_INDEX]:
+			index = self.power_bricks_list[Q48SC12050CLInstructions.DEVICE_ADDRESS_INDEX].index(device_address)
+			self.power_bricks_list[Q48SC12050CLInstructions.DEVICE_ADDRESS_INDEX].pop(index)
+			self.power_bricks_list[Q48SC12050CLInstructions.POWER_BRICK_INSTANCE_INDEX].pop(index)
+
+
+	def convert_device_address_string_to_int(self, device_address_string):
+		try:
+			if len(device_address_string) >= 2:
+				if device_address_string[0:2] == "0b":
+					device_address_bit_array = BitArray(bin=device_address_string)
+				elif device_address_string[0:2] == "0x":
+					device_address_bit_array = BitArray(hex=device_address_string)
+				else:
+					device_address_bit_array = BitArray(uint=int(device_address_string), length=8)
+			else:
+				device_address_bit_array = BitArray(uint=int(device_address_string), length=8)
+		except:
+			raise Q48SC12050CLInstructionsInvalidDeviceAddressInput(device_address_string)
+		return device_address_bit_array.int
+
+	def check_unique_device_address(self, device_address):
+		if device_address in list(self.power_bricks_dict):
+			raise Q48SC12050CLInstructionsDeviceAddressAlreadyExists(device_address)
+
+
+	def execute_instruction(self, command, command_arguments):
+		if command == "write":
+			self.execute_write_command(command_arguments)
+		elif command == "read":
+			self.execute_read_command(command_arguments)
+		else:
+			pass
+			# Invalid Command
+
+
+	def execute_write_command(self, command_arguments):
+		write_parser = ArgumentParser()
+
+		power_brick_selection_group = write_parser.add_mutually_exclusive_group(required=True)
+		power_brick_selection_group.add_argument("-i", "--index", type=int, help="Specifies power brick index to write to")
+		power_brick_selection_group.add_argument("-a", "--address", help="Specifies power brick device address to write to")
+
+		write_parser.add_argument("-c", "--command", required=True, help="PMBus Command to write to Power Brick; text or address")
+
+		data_group = write_parser.add_mutually_exclusive_group()
+		data_group.add_argument("-v", "--value", type=int, help="Individual value to send with PMBus Command")
+		data_group.add_argument("-b", "--bytes", nargs="+", help="List of Bytes (Hex, Binary, Decimal) to send with PMBus Command")
+
+		consecutive_write_group = write_parser.add_mutually_exclusive_group()
+		consecutive_write_group.add_argument("-l", "--loops", type=int, help="Number of consecutive write commands to execute")
+		consecutive_write_group.add_argument("-t", "--time", type=int, help="Number of milliseconds to continuously send write command for")
+
+		arguments = write_parser.parse_args(command_arguments)
+
+		if arguments.index != None:
+			power_brick_to_write = self.power_bricks_list[Q48SC12050CLInstructions.POWER_BRICK_INSTANCE_INDEX][arguments.index]
+		elif arguments.address != None:
+			index = self.power_bricks_list[Q48SC12050CLInstructions.DEVICE_ADDRESS_INDEX].index(device_address)
+			power_brick_to_write = self.power_bricks_list[Q48SC12050CLInstructions.POWER_BRICK_INSTANCE_INDEX][index]
+			
+
 if __name__ == "__main__":
 	#i2c_bus_num = 1;
 	#smbus_instance = SMBus(i2c_bus_num)
@@ -216,8 +347,25 @@ if __name__ == "__main__":
 	table_input_file = "Q48SC12050_PMBus_Commands.csv"
 	command_table = Q48SC12050PmbusCommandTable(table_input_file)
 	
-	power_brick1 = Q48SC12050(0x7F, smbus_instance, command_table)
+	# power_brick1 = Q48SC12050(0x7F, smbus_instance, command_table)
 	# power_brick2 = Q48SC12050(0x23, smbus_instance, command_table)
+
+	terminal = Q48SC12050CLInstructions(smbus_instance, command_table)
+	#terminal.evoke_device_configuration_prompt()
+
+	#command_list = ["write", "read", "listc", "plot", "help", "trans", "addpb", "deletepb", "listpb", "exit", "pec"]
+
+	#parser = ArgumentParser()
+	#parser.add_argument("command", choices=command_list, help="Select Q48SC12050 power supply control command")
+
+
+
+	command_list = str(input()).split(" ")
+	command = command_list[0]
+	argument_list = command_list[1:]
+	terminal.execute_instruction(command, argument_list)
+
+
 
 
 
