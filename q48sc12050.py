@@ -39,6 +39,15 @@ class Q48SC12050:
 		self.smbus_instance = smbus_instance
 		self.command_table = command_table
 
+	def write_value(self, command, value):
+		pass
+
+	def write_bytes(self, command, bytes_to_write):
+		pass
+
+	def write_command(self, command):
+		pass
+
 	def write_command(self, command, data=[]):
 		command_entry = self.get_command_table_entry(command)
 		if command_entry.is_linear_data_format():
@@ -202,11 +211,7 @@ class Q48SC12050:
 			raise Q48SC12050ReadEnableError(command_entry.get_command_name())
 
 	def get_command_table_entry(self, command):
-		try:
-			command_entry = self.command_table[command]
-		except:
-			raise Q48SC12050InvalidCommandError(command)
-		return command_entry
+		return self.command_table[command]
 
 	def get_device_address(self):
 		return self.device_address
@@ -225,8 +230,14 @@ class Q48SC12050CLInstructionsDeviceAddressAlreadyExists(Q48SC12050CLInstruction
 		super().__init__(f"Device with address {device_address} is already configured")
 
 class Q48SC12050CLInstructionsInvalidPowerBrickSelection(Q48SC12050CLInstructionsBaseError):
-	def __init__(self, argument):
-		super().__init__(f"Error selecting power brick with -i and -a command options")
+
+class Q48SC12050CLInstructionsInvalidPowerBrickIndexSelection(Q48SC12050CLInstructionsInvalidPowerBrickSelection):
+	def __init__(self, index, num_power_bricks_configured):
+		super().__init__(f"{index} is not a valid power brick index; valid indices are [0, {num_power_bricks_configured - 1}]")
+
+class Q48SC12050CLInstructionsInvalidPowerBrickDeviceAddressSelection(Q48SC12050CLInstructionsInvalidPowerBrickSelection):
+	def __init__(self, device_address, device_address_list):
+		super().__init__(f"{device_address} is not a configured device address; choose from {device_address_list} or configure new device")
 
 class Q48SC12050CLInstructions:
 
@@ -261,7 +272,8 @@ class Q48SC12050CLInstructions:
 				print(f"Power Brick {i} PMBus Device Address:", end=" ");
 				device_address_string = str(input())
 				try:
-					device_address_int = self.convert_device_address_string_to_int(device_address_string)
+					device_address_int = self.convert_address_string_to_int(device_address_string)
+					self.verify_device_address(device_address_int)
 					self.check_unique_device_address(device_address_int)
 				except Q48SC12050CLInstructionsBaseError as err:
 					print(err.error_message)
@@ -281,14 +293,15 @@ class Q48SC12050CLInstructions:
 			self.power_bricks_list[Q48SC12050CLInstructions.DEVICE_ADDRESS_INDEX].pop(index)
 			self.power_bricks_list[Q48SC12050CLInstructions.POWER_BRICK_INSTANCE_INDEX].pop(index)
 
-
-	def convert_device_address_string_to_int(self, device_address_string):
+	def convert_address_string_to_int(self, device_address_string):
 		try:
 			if len(device_address_string) >= 2:
 				if device_address_string[0:2] == "0b":
 					device_address_bit_array = BitArray(bin=device_address_string)
 				elif device_address_string[0:2] == "0x":
 					device_address_bit_array = BitArray(hex=device_address_string)
+				elif device_address_string[0] == "-":
+					device_address_bit_array = BitArray(int=int(device_address_string), length=8)
 				else:
 					device_address_bit_array = BitArray(uint=int(device_address_string), length=8)
 			else:
@@ -297,10 +310,13 @@ class Q48SC12050CLInstructions:
 			raise Q48SC12050CLInstructionsInvalidDeviceAddressInput(device_address_string)
 		return device_address_bit_array.int
 
+	def verify_device_address(self, device_address):
+		if not (0x00 <= device_address <= 0x7F):
+			raise Q48SC12050CLInstructionsInvalidDeviceAddressInput(device_address)
+
 	def check_unique_device_address(self, device_address):
 		if device_address in list(self.power_bricks_dict):
 			raise Q48SC12050CLInstructionsDeviceAddressAlreadyExists(device_address)
-
 
 	def execute_instruction(self, command, command_arguments):
 		if command == "write":
@@ -311,18 +327,52 @@ class Q48SC12050CLInstructions:
 			pass
 			# Invalid Command
 
+	def get_power_brick_from_index(self, index):
+		try:
+			power_brick = self.power_bricks_list[Q48SC12050CLInstructions.POWER_BRICK_INSTANCE_INDEX][arguments.index]
+		except:
+			raise Q48SC12050CLInstructionsInvalidPowerBrickIndexSelection(index, self.num_power_bricks_configured)
+		return power_brick
+
+	def get_power_brick_from_address(self, device_address):
+		try:
+			index = self.power_bricks_list[Q48SC12050CLInstructions.DEVICE_ADDRESS_INDEX].index(device_address)
+			power_brick = self.power_bricks_list[Q48SC12050CLInstructions.POWER_BRICK_INSTANCE_INDEX][index]
+		except:
+			raise Q48SC12050CLInstructionsInvalidPowerBrickDeviceAddressSelection(device_address, self.power_bricks_list[Q48SC12050CLInstructions.DEVICE_ADDRESS_INDEX])
+		return power_brick
+
+	def select_power_brick(self, index, device_address):
+		if index != None:
+			power_brick_instance = self.get_power_brick_from_index(index)
+		elif address != None:
+			device_address_int = self.convert_address_string_to_int(address)
+			self.verify_device_address(device_address_int)
+			power_brick_instance = self.get_power_brick_from_address(device_address_int)
+		return power_brick_instance
+
+	def get_command(self, command):
+		try:
+			new_command = self.convert_address_string_to_int(command)
+		except:
+			new_command = command
+		return new_command
+
+	def get_data(self, value, bytes_read):
+		if value != None:
+
 
 	def execute_write_command(self, command_arguments):
 		write_parser = ArgumentParser()
+
+		write_parser.add_argument("command", help="PMBus Command to write to Power Brick; text or address")
 
 		power_brick_selection_group = write_parser.add_mutually_exclusive_group(required=True)
 		power_brick_selection_group.add_argument("-i", "--index", type=int, help="Specifies power brick index to write to")
 		power_brick_selection_group.add_argument("-a", "--address", help="Specifies power brick device address to write to")
 
-		write_parser.add_argument("-c", "--command", required=True, help="PMBus Command to write to Power Brick; text or address")
-
 		data_group = write_parser.add_mutually_exclusive_group()
-		data_group.add_argument("-v", "--value", type=int, help="Individual value to send with PMBus Command")
+		data_group.add_argument("-v", "--value", type=float, help="Individual value to send with PMBus Command")
 		data_group.add_argument("-b", "--bytes", nargs="+", help="List of Bytes (Hex, Binary, Decimal) to send with PMBus Command")
 
 		consecutive_write_group = write_parser.add_mutually_exclusive_group()
@@ -331,11 +381,15 @@ class Q48SC12050CLInstructions:
 
 		arguments = write_parser.parse_args(command_arguments)
 
-		if arguments.index != None:
-			power_brick_to_write = self.power_bricks_list[Q48SC12050CLInstructions.POWER_BRICK_INSTANCE_INDEX][arguments.index]
-		elif arguments.address != None:
-			index = self.power_bricks_list[Q48SC12050CLInstructions.DEVICE_ADDRESS_INDEX].index(device_address)
-			power_brick_to_write = self.power_bricks_list[Q48SC12050CLInstructions.POWER_BRICK_INSTANCE_INDEX][index]
+		command = get_command(arguments.command)
+
+		try:
+			power_brick_instance =  self.select_power_brick(arguments.index, arguments.address)
+		except Q48SC12050CLInstructionsBaseError as err:
+			print(err.error_message)
+			return
+
+		power_brick_instance.write_data()
 			
 
 if __name__ == "__main__":

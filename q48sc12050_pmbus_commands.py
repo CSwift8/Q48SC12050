@@ -1,3 +1,11 @@
+class Q48SC12050PmbusCommandTableBaseError(Exception):
+	def __init__(self, error_message):
+		super().__init__(error_mesage)
+		self.error_message = error_message
+
+class Q48SC12050PmbusCommandTableInvalidCommand(Q48SC12050PmbusCommandTableBaseError):
+	def __init__(self, command):
+		super().__init__(f"{command_name} does not exist in the command table")
 
 class Q48SC12050PmbusCommandTable:
 
@@ -24,13 +32,18 @@ class Q48SC12050PmbusCommandTable:
 			command_data = read_line.split(",")
 			new_command_entry = Q48SC12050PmbusCommandEntry(command_data)
 			self.pmbus_command_table.update({new_command_entry.get_command_name() : new_command_entry})
+			self.pmbus_command_table.update({new_command_entry.get_command_address() : new_command_entry})
 			read_line = input_file.readline()
 
 		# Close File
 		input_file.close()
 
 	def __getitem__(self, key):
-		return self.pmbus_command_table[key]
+		try:
+			command_entry = self.pmbus_command_table[key]
+		except:
+			raise Q48SC12050PmbusCommandTableInvalidCommand(command=key)
+		return command_entry
 
 class Q48SC12050PmbusCommandEntry:
 	COMMAND_NAME_INDEX = 0
