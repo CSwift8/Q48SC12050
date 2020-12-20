@@ -39,19 +39,10 @@ class Q48SC12050:
 		self.smbus_instance = smbus_instance
 		self.command_table = command_table
 
-	def write_value(self, command, value):
-		pass
-
-	def write_bytes(self, command, bytes_to_write):
-		pass
-
-	def write_command(self, command):
-		pass
-
 	def write_command(self, command, data=[]):
 		command_entry = self.get_command_table_entry(command)
 		if command_entry.is_linear_data_format():
-			bytes_to_write = self.get_linear_write_bytes(command_entry, data)
+			bytes_to_write = get_linear_write_bytes(command_entry, data)
 		else:
 			bytes_to_write = data
 		self.write_data(command_entry, bytes_to_write)
@@ -86,14 +77,14 @@ class Q48SC12050:
 
 		return self.smbus_instance.read_i2c_block_data(self.device_address, command_address, command_num_data_bytes)
 
-	def get_linear_write_bytes(self, command_entry, value):
+	def get_linear_write_bytes(command_entry, value):
 		exponent = command_entry.get_exponent()
 		num_mantissa_bits = command_entry.get_num_mantissa_bits()
 		num_exponent_bits = command_entry.get_num_exponent_bits()
 		data_signed = command_entry.is_data_signed()
 
-		exponent_bit_array = self.calculate_exponent_bit_array(exponent, num_exponent_bits)
-		mantissa_bit_array = self.calculate_mantissa_bit_array(value, exponent, num_mantissa_bits, data_signed)
+		exponent_bit_array = calculate_exponent_bit_array(exponent, num_exponent_bits)
+		mantissa_bit_array = calculate_mantissa_bit_array(value, exponent, num_mantissa_bits, data_signed)
 		two_byte_bit_array = exponent_bit_array + mantissa_bit_array
 
 		lower_byte = two_byte_bit_array[8:16]
@@ -139,7 +130,7 @@ class Q48SC12050:
 			mantissa = mantissa_bit_array.uint
 		return mantissa
 
-	def calculate_exponent_bit_array(self, exponent, num_exponent_bits):
+	def calculate_exponent_bit_array(exponent, num_exponent_bits):
 		if (num_exponent_bits == 0):
 			return BitArray()
 
@@ -150,7 +141,7 @@ class Q48SC12050:
 			raise
 		return exponent_bit_array
 
-	def calculate_mantissa_bit_array(self, value, exponent, num_mantissa_bits, signed):
+	def calculate_mantissa_bit_array(value, exponent, num_mantissa_bits, signed):
 		if (num_mantissa_bits == 0):
 			return BitArray()
 
@@ -293,21 +284,21 @@ class Q48SC12050CLInstructions:
 			self.power_bricks_list[Q48SC12050CLInstructions.DEVICE_ADDRESS_INDEX].pop(index)
 			self.power_bricks_list[Q48SC12050CLInstructions.POWER_BRICK_INSTANCE_INDEX].pop(index)
 
-	def convert_address_string_to_int(self, device_address_string):
+	def convert_address_string_to_int(self, address_string):
 		try:
-			if len(device_address_string) >= 2:
-				if device_address_string[0:2] == "0b":
-					device_address_bit_array = BitArray(bin=device_address_string)
-				elif device_address_string[0:2] == "0x":
-					device_address_bit_array = BitArray(hex=device_address_string)
-				elif device_address_string[0] == "-":
-					device_address_bit_array = BitArray(int=int(device_address_string), length=8)
+			if len(address_string) >= 2:
+				if address_string[0:2] == "0b":
+					device_address_bit_array = BitArray(bin=address_string)
+				elif address_string[0:2] == "0x":
+					device_address_bit_array = BitArray(hex=address_string)
+				elif address_string[0] == "-":
+					device_address_bit_array = BitArray(int=int(address_string), length=8)
 				else:
-					device_address_bit_array = BitArray(uint=int(device_address_string), length=8)
+					device_address_bit_array = BitArray(uint=int(address_string), length=8)
 			else:
-				device_address_bit_array = BitArray(uint=int(device_address_string), length=8)
+				device_address_bit_array = BitArray(uint=int(address_string), length=8)
 		except:
-			raise Q48SC12050CLInstructionsInvalidDeviceAddressInput(device_address_string)
+			raise Q48SC12050CLInstructionsInvalidDeviceAddressInput(address_string)
 		return device_address_bit_array.int
 
 	def verify_device_address(self, device_address):
@@ -358,9 +349,16 @@ class Q48SC12050CLInstructions:
 			new_command = command
 		return new_command
 
-	def get_data(self, value, bytes_read):
-		if value != None:
-
+	def get_bytes_to_write(self, value, bytes_read, command_table_entry):
+		if value != None
+			if command_table_entry.is_linear_data_format():
+				bytes_to_write = Q48SC12050.get_linear_write_bytes(command_table_entry, value)
+			else:
+				pass
+				# Error
+		elif bytes_read != None:
+			bytes_to_write = copy.copy(bytes_read.reverse())
+		return bytes_to_write
 
 	def execute_write_command(self, command_arguments):
 		write_parser = ArgumentParser()
@@ -373,7 +371,7 @@ class Q48SC12050CLInstructions:
 
 		data_group = write_parser.add_mutually_exclusive_group()
 		data_group.add_argument("-v", "--value", type=float, help="Individual value to send with PMBus Command")
-		data_group.add_argument("-b", "--bytes", nargs="+", help="List of Bytes (Hex, Binary, Decimal) to send with PMBus Command")
+		data_group.add_argument("-b", "--bytes", nargs="+", help="List of Bytes (Hex, Binary, Decimal) to send with PMBus Command with MSByte First")
 
 		consecutive_write_group = write_parser.add_mutually_exclusive_group()
 		consecutive_write_group.add_argument("-l", "--loops", type=int, help="Number of consecutive write commands to execute")
@@ -389,7 +387,14 @@ class Q48SC12050CLInstructions:
 			print(err.error_message)
 			return
 
-		power_brick_instance.write_data()
+		try:
+			command_table_entry = power_brick_instance.get_command_table_entry(command)
+		except Q48SC12050PmbusCommandTableBaseError as err:
+			print(err.error_message)
+			return
+
+		bytes_to_write = self.get_bytes_to_write(arguments.value, arguments.bytes_read, command_table_entry)
+		power_brick_instance.write_data(command_table_entry, bytes_to_write)
 			
 
 if __name__ == "__main__":
