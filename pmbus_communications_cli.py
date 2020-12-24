@@ -19,6 +19,7 @@ class Q48SC12050CLInstructionsDeviceAddressAlreadyExists(Q48SC12050CLInstruction
 		super().__init__(f"Device with address {device_address} is already configured")
 
 class Q48SC12050CLInstructionsInvalidPowerBrickSelection(Q48SC12050CLInstructionsBaseError):
+	pass
 
 class Q48SC12050CLInstructionsInvalidPowerBrickIndexSelection(Q48SC12050CLInstructionsInvalidPowerBrickSelection):
 	def __init__(self, index, num_power_bricks_configured):
@@ -28,20 +29,25 @@ class Q48SC12050CLInstructionsInvalidPowerBrickDeviceAddressSelection(Q48SC12050
 	def __init__(self, device_address, device_address_list):
 		super().__init__(f"{device_address} is not a configured device address; choose from {device_address_list} or configure new device")
 
+class Q48SC12050CLInstructionsInvalidDeviceType(Q48SC12050CLInstructionsInvalidPowerBrickSelection):
+	def __init__(self, user_selected_device_type):
+		super().__init__(f"{user_selected_device_type} is not a valid device type")
+
 class PmbusCommunicationsCLI:
 
 	DEVICE_ADDRESS_INDEX = 0
 	POWER_BRICK_INSTANCE_INDEX = 1
+	GENERAL_PMBUS_DEVICE_NAME = "other"
 
 	def __init__(self):
 		self.num_power_bricks_configured = 0
 		self.power_bricks_list = [[], []]
 
 	def evoke_device_configuration_prompt(self):
-		self.configure_initial_num_power_bricks()
-		self.configure_initial_power_bricks()
+		self.configure_initial_num_pmbus_devices()
+		self.configure_initial_pmbus_devices()
 
-	def configure_initial_num_power_bricks(self):
+	def configure_initial_num_pmbus_devices(self):
 		is_valid_input = False
 		while not is_valid_input:
 			print("Number of Q48SSC12050 Power Bricks:", end=" ")
@@ -52,27 +58,97 @@ class PmbusCommunicationsCLI:
 			else:
 				is_valid_input = True
 
-	def configure_initial_power_bricks(self):
+	def configure_initial_pmbus_devices(self):
+		self.configure_pmbus_devices()
 		for i in range(self.num_power_bricks_configured):
-			is_valid_input = False
-			while not is_valid_input:
-				print(f"Power Brick {i} PMBus Device Address:", end=" ");
-				device_address_string = str(input())
-				try:
-					device_address_int = self.convert_address_string_to_int(device_address_string)
-					self.verify_device_address(device_address_int)
-					self.check_unique_device_address(device_address_int)
-				except Q48SC12050CLInstructionsBaseError as err:
-					print(err.error_message)
-					is_valid_input = False
-				else:
-					self.add_power_brick(device_address_int)
-					is_valid_input = True
+			device_class = prompt_and_get_pmbus_device_type(i)
+			if device_class == PmbusDevice:
+				command_table = prompt_and_get_command_table(i)
+			else:
+				command_table = None
+			device_address = prompt_and_get_device_address(i)
+			smbus_instance = prompt_and_get_smbus_instance(i)
+			self.add_pmbus_device(device_class, device_address, smbus_instance, command_table)
 
-	def add_power_brick(self, device_address):
-		power_brick = Q48SC12050(device_address, self.smbus_instance, self.command_table)
+	def prompt_and_get_device_address(self, device_index):
+		prompt = f"PMBus Device #{device_index} Address:"
+		def try_statement_function():
+			device_address_string = str(input())
+			device_address_int = byte_conversion.convert_byte_string_to_int(device_address_string)
+			self.verify_device_address(device_address_int)
+			self.check_unique_device_address(device_address_int)
+			return device_address_int
+		device_address_int = self.prompt_and_get(prompt, try_statement_function)
+		return device_address_int
+
+	def prompt_and_get_pmbus_device_type(self, device_index):
+		prompt = f"Select PMBus Device #{device_index} Type:\n"
+		for device_class in list(self.pmbus_devices_dict):
+			prompt += (device_class + "\n")
+		prompt += PmbusCommunicationsCLI.GENERAL_PMBUS_DEVICE_NAME + "\n"
+		def try_statement_function():
+			user_selected_device_type = str(input())
+			device_class = self.get_pmbus_device_class(user_selected_device_type)
+			return device_class
+		device_class = self.prompt_and_get(prompt, try_statement_function)
+		return device_class
+
+	def prompt_and_get_command_table(self, device_index):
+		prompt = f"PMBus Device #{device_index} Command Table File Path: "
+		def try_statement_function():
+			user_selected_command_table = str(input())
+			command_table = PmbusCommandTable(user_selected_command_table)
+			return command_table
+		command_table = self.prompt_and_get(prompt, try_statement_function)
+		return command_table
+
+	def prompt_and_get_smbus_instance(self, device_index):
+		prompt = f"PMBus Device #{device_index} SMBus Number: "
+		def try_statement_function():
+			smbus_number = int(input())
+			self.verify_smbus_number(smbus_number)
+			smbus_instance = SMBus(smbus_number)
+			return smbus_instance
+		smbus_instance = self.prompt_and_get(prompt, try_statement_function)
+		return smbus_instance
+
+	def prompt_and_get(self, prompt, try_statement_function):
+		is_valid = False
+		while not is_valid:
+			print(prompt, end="")
+			try:
+				value = try_statement_function()
+			except Exception as err:
+				print(err)
+				is_valid = False
+			else:
+				is_valid = True
+		return value
+
+	def configure_pmbus_devices(self):
+		self.pmbus_devices_dict = dict()
+		for pmbus_device_class in PmbusDevice.__subclasses__():
+			class_name = pmbus_device_class.__name__
+			pmbus_devices_dict.update({class_name : pmbus_device_class})
+
+	def get_pmbus_device_class(self, class_name):
+		if class_name == PmbusCommunicationsCLI.GENERAL_PMBUS_DEVICE_NAME:
+			device_class = PmbusDevice
+		else:
+			try:
+				device_class = self.pmbus_devices_dict[class_name]
+			except:
+				raise Q48SC12050CLInstructionsInvalidDeviceType(class_name)
+		return device_class
+
+	def add_pmbus_device(self, device_class, device_address, smbus_instance, command_table):
+		if command_table == None:
+			pmbus_device = device_class(device_address, smbus_instance)
+		else:
+			pmbus_device = device_class(device_address, smbus_instance, command_table)
+
 		self.power_bricks_list[Q48SC12050CLInstructions.DEVICE_ADDRESS_INDEX].append(device_address)
-		self.power_bricks_list[Q48SC12050CLInstructions.POWER_BRICK_INSTANCE_INDEX].append(power_brick)
+		self.power_bricks_list[Q48SC12050CLInstructions.POWER_BRICK_INSTANCE_INDEX].append(pmbus_device)
 
 	def delete_power_brick(self, device_address):
 		if device_address in self.power_bricks_list[Q48SC12050CLInstructions.DEVICE_ADDRESS_INDEX]:
@@ -80,24 +156,12 @@ class PmbusCommunicationsCLI:
 			self.power_bricks_list[Q48SC12050CLInstructions.DEVICE_ADDRESS_INDEX].pop(index)
 			self.power_bricks_list[Q48SC12050CLInstructions.POWER_BRICK_INSTANCE_INDEX].pop(index)
 
-	def convert_address_string_to_int(self, address_string):
-		try:
-			if len(address_string) >= 2:
-				if address_string[0:2] == "0b":
-					device_address_bit_array = BitArray(bin=address_string)
-				elif address_string[0:2] == "0x":
-					device_address_bit_array = BitArray(hex=address_string)
-				elif address_string[0] == "-":
-					device_address_bit_array = BitArray(int=int(address_string), length=8)
-				else:
-					device_address_bit_array = BitArray(uint=int(address_string), length=8)
-			else:
-				device_address_bit_array = BitArray(uint=int(address_string), length=8)
-		except:
-			raise Q48SC12050CLInstructionsInvalidDeviceAddressInput(address_string)
-		return device_address_bit_array.int
+	def verify_smbus_number(self, smbus_number):
+		if (smbus_number != 0) and (smbus_number != 1)
+			# Raise Error
 
 	def verify_device_address(self, device_address):
+		# SMBus Device Addresses are 7-bits
 		if not (0x00 <= device_address <= 0x7F):
 			raise Q48SC12050CLInstructionsInvalidDeviceAddressInput(device_address)
 

@@ -188,7 +188,7 @@ class PmbusDevice:
 	def get_device_address(self):
 		return self.device_address
 
-	def get_command_table_file_path(self, class_name):
+	def get_command_table_file_path(class_name):
 		TABLE_DIRECTORY_NAME = "PmbusCommandTables"
 		TABLE_FILE_EXTENSION = ".csv"
 		file_name = class_name + TABLE_FILE_EXTENSION
@@ -198,18 +198,9 @@ class PmbusDevice:
 class q48sc12050(PmbusDevice):
 
 	def __init__(self, device_address, smbus_instance):
-		command_table_file_path = super().get_command_table_file_path(__class__.__name__)
+		command_table_file_path = PmbusDevice.get_command_table_file_path(__class__.__name__)
 		command_table = PmbusCommandTable(command_table_file_path)
 		super().__init__(device_address, smbus_instance, command_table)
-
-pmbus_devices_dict = dict()
-def configure_pmbus_devices():
-	for pmbus_device_class in PmbusDevice.__subclasses__():
-		class_name = pmbus_device_class.__name__
-		pmbus_devices_dict.update({class_name : pmbus_device_class})
-
-def get_pmbus_device_class(class_name):
-	return pmbus_devices_dict[class_name]
 	
 
 if __name__ == "__main__":
